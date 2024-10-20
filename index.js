@@ -1,7 +1,8 @@
 const { Command } = require('commander');
 const http = require('http');
-const fs = require('fs').promises;  // Імпорт модуля fs.promises для роботи з файлами
-const path = require('path');  // Для роботи з шляхами до файлів
+const fs = require('fs').promises;
+const path = require('path');
+const superagent = require('superagent');
 const program = new Command();
 
 program
@@ -13,7 +14,6 @@ program.parse(process.argv);
 
 const options = program.opts();
 
-// Функція для читання файлу
 async function readFile(filePath) {
   try {
     const data = await fs.readFile(filePath);
@@ -24,7 +24,6 @@ async function readFile(filePath) {
   }
 }
 
-// Функція для запису файлу
 async function writeFile(filePath, data) {
   try {
     await fs.writeFile(filePath, data);
@@ -34,7 +33,6 @@ async function writeFile(filePath, data) {
   }
 }
 
-// Функція для видалення файлу
 async function deleteFile(filePath) {
   try {
     await fs.unlink(filePath);
@@ -44,18 +42,36 @@ async function deleteFile(filePath) {
   }
 }
 
-// Створення HTTP сервера
+async function fetchImageFromHttpCat(statusCode) {
+  try {
+    const response = await superagent.get(`https://http.cat/${statusCode}`).buffer(); // Use buffer() for image data
+    return response.body; // Use response.body for binary image data
+  } catch (error) {
+    console.error('Error fetching image:', error);
+    return null;
+  }
+}
+
 const server = http.createServer(async (req, res) => {
-  const filePath = path.join(options.cache, req.url.substring(1)); // Отримання шляху до файлу
+  const filePath = path.join(options.cache, req.url.substring(1));
 
   if (req.method === 'GET') {
     const data = await readFile(filePath);
     if (data) {
-      res.writeHead(200, {'Content-Type': 'image/jpeg'}); // Змінити тип контенту на необхідний
+      res.writeHead(200, { 'Content-Type': 'image/jpeg' });
       res.end(data);
     } else {
-      res.writeHead(404, {'Content-Type': 'text/plain'});
-      res.end('File not found');
+      // If the file is not found, fetch from http.cat
+      const statusCode = req.url.substring(1);
+      const catImage = await fetchImageFromHttpCat(statusCode);
+      if (catImage) {
+        await writeFile(filePath, catImage);
+        res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+        res.end(catImage);
+      } else {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('File not found and failed to fetch from http.cat');
+      }
     }
   } else if (req.method === 'PUT') {
     let body = [];
@@ -64,20 +80,19 @@ const server = http.createServer(async (req, res) => {
     }).on('end', async () => {
       const buffer = Buffer.concat(body);
       await writeFile(filePath, buffer);
-      res.writeHead(201, {'Content-Type': 'text/plain'});
+      res.writeHead(201, { 'Content-Type': 'text/plain' });
       res.end('File uploaded');
     });
   } else if (req.method === 'DELETE') {
     await deleteFile(filePath);
-    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('File deleted');
   } else {
-    res.writeHead(405, {'Content-Type': 'text/plain'});
+    res.writeHead(405, { 'Content-Type': 'text/plain' });
     res.end('Method not allowed');
   }
 });
 
-// Запуск сервера
 server.listen(options.port, options.host, () => {
   console.log(`Server running at http://${options.host}:${options.port}/`);
 });
